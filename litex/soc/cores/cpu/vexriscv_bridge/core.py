@@ -91,7 +91,6 @@ class VexRiscvBridge(CPU):
         cpu_group.add_argument("--csr-base",                     default="0xf0000000", help="CSR base address.")
         cpu_group.add_argument("--clint-base",                   default="0xf0010000", help="CLINT base address.")
         cpu_group.add_argument("--plic-base",                    default="0xf0c00000", help="PLIC base address.")
-        cpu_group.add_argument("--jtag-tap",                     action="store_true", help="Add the jtag tap instead of jtag instruction interface")
 
     @staticmethod
     def args_read(args):
@@ -205,78 +204,42 @@ class VexRiscvBridge(CPU):
         f"{'_Fpu' + str(VexRiscvBridge.cpu_per_fpu)  if VexRiscvBridge.with_fpu else ''}" \
         f"{'_Pd'   if VexRiscvBridge.privileged_debug else ''}" \
         f"{'_Hb' + str(VexRiscvBridge.hardware_breakpoints) if VexRiscvBridge.hardware_breakpoints > 0 else ''}" \
-        f"{'_Rvc'  if VexRiscvBridge.with_rvc else ''}" \
+        f"{'_Rvc'  if VexRiscvBridge.with_rvc else ''}"
         f"{'_JtagT'  if VexRiscvBridge.jtag_tap else ''}"
 
     # Default Configs Generation.
     @staticmethod
     def generate_default_configs():
         # Sim
-        VexRiscvBridge.wishbone_memory = False
-        VexRiscvBridge.hardware_breakpoints = 1
-        VexRiscvBridge.coherent_dma = False
+        # Single core
+        VexRiscvBridge.cpu_count = 1
+
+        # Cache parameters
+        # Let's not worry about cache for now
+        VexRiscvBridge.icache_width = 32
+        VexRiscvBridge.dcache_width = 32
+        VexRiscvBridge.dcache_size  = 0
+        VexRiscvBridge.icache_size  = 0
+        # VexRiscvBridge.dcache_size  = 4096
+        # VexRiscvBridge.icache_size  = 4096
+        VexRiscvBridge.dcache_ways  = 1
+        VexRiscvBridge.icache_ways  = 1
+
+        # DMA, memory, etc.
+        VexRiscvBridge.wishbone_memory      = True
+        VexRiscvBridge.with_rvc             = True
+        VexRiscvBridge.with_mmu             = False
+        VexRiscvBridge.coherent_dma         = False
+        VexRiscvBridge.hardware_breakpoints = 0
+
+        # Without formal
+        VexRiscvBridge.with_formal  = False
+
         VexRiscvBridge.generate_cluster_name()
         VexRiscvBridge.generate_netlist()
 
-        # Single cores.
-        for data_width in [None, 16, 32, 64, 128]:
-            if data_width is None:
-                VexRiscvBridge.wishbone_memory = True
-            else:
-                VexRiscvBridge.wishbone_memory = False
-                VexRiscvBridge.litedram_width = data_width
-            VexRiscvBridge.icache_width   = 32
-            VexRiscvBridge.dcache_width   = 32
-            VexRiscvBridge.coherent_dma   = False
-            VexRiscvBridge.cpu_count      = 1
-
-            # Low cache amount.
-            VexRiscvBridge.dcache_size    = 4096
-            VexRiscvBridge.icache_size    = 4096
-            VexRiscvBridge.dcache_ways    = 1
-            VexRiscvBridge.icache_ways    = 1
-
-            # Without DMA.
-            VexRiscvBridge.coherent_dma   = False
-            VexRiscvBridge.generate_cluster_name()
-            VexRiscvBridge.generate_netlist()
-
-            # With DMA.
-            VexRiscvBridge.coherent_dma   = True
-            VexRiscvBridge.generate_cluster_name()
-            VexRiscvBridge.generate_netlist()
-
-            # High cache amount.
-            VexRiscvBridge.dcache_size    = 8192
-            VexRiscvBridge.icache_size    = 8192
-            VexRiscvBridge.dcache_ways    = 2
-            VexRiscvBridge.icache_ways    = 2
-            VexRiscvBridge.icache_width   = 32 if data_width is None \
-                                              or data_width < 64 else 64
-            VexRiscvBridge.dcache_width   = 32 if data_width is None \
-                                              or data_width < 64 else 64
-
-            VexRiscvBridge.hardware_breakpoint = 0
-
-            # Without DMA.
-            VexRiscvBridge.coherent_dma = False
-            VexRiscvBridge.generate_cluster_name()
-            VexRiscvBridge.generate_netlist()
-
-            # With DMA.
-            VexRiscvBridge.coherent_dma = True
-            VexRiscvBridge.generate_cluster_name()
-            VexRiscvBridge.generate_netlist()
-
         # Multi cores.
-        for core_count in [2,4]:
-            VexRiscvBridge.litedram_width = 128
-            VexRiscvBridge.icache_width   = 64
-            VexRiscvBridge.dcache_width   = 64
-            VexRiscvBridge.dcache_size    = 8192
-            VexRiscvBridge.icache_size    = 8192
-            VexRiscvBridge.dcache_ways    = 2
-            VexRiscvBridge.icache_ways    = 2
+        for core_count in [2]:
             VexRiscvBridge.coherent_dma   = True
             VexRiscvBridge.cpu_count      = core_count
             VexRiscvBridge.generate_cluster_name()
@@ -291,7 +254,6 @@ class VexRiscvBridge(CPU):
         if(VexRiscvBridge.coherent_dma):
             gen_args.append("--coherent-dma")
         gen_args.append(f"--cpu-count={VexRiscvBridge.cpu_count}")
-        gen_args.append(f"--reset-vector={VexRiscvBridge.reset_vector}")
         gen_args.append(f"--ibus-width={VexRiscvBridge.icache_width}")
         gen_args.append(f"--dbus-width={VexRiscvBridge.dcache_width}")
         gen_args.append(f"--dcache-size={VexRiscvBridge.dcache_size}")
@@ -313,7 +275,7 @@ class VexRiscvBridge(CPU):
         gen_args.append(f"--netlist-directory={vdir}")
         gen_args.append(f"--dtlb-size={VexRiscvBridge.dtlb_size}")
         gen_args.append(f"--itlb-size={VexRiscvBridge.itlb_size}")
-        gen_args.append(f"--jtag-tap={VexRiscvBridge.jtag_tap}")
+        gen_args.append(f"--mmu={VexRiscvBridge.with_mmu}")
 
         cmd = 'cd {path} && sbt "runMain vexriscv.demo.bridge.VexRiscvBridgeLitexSmpClusterCmdGen {args}"'.format(path=os.path.join(vdir, "ext", "VexRiscv"), args=" ".join(gen_args))
         subprocess.check_call(cmd, shell=True)
