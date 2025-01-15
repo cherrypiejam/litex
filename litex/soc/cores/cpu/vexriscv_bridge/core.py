@@ -67,7 +67,7 @@ class VexRiscvBridge(CPU):
     pmp_regions          = 16
     pmp_granularity      = 256
     with_supervisor      = False
-    shared_region_start  = 0x4000_0000
+    shared_region_base   = 0x4000_0000
     shared_region_size   = 0x1000_0000
 
     # Command line configuration arguments.
@@ -98,8 +98,10 @@ class VexRiscvBridge(CPU):
         cpu_group.add_argument("--csr-base",                     default="0xf0000000", help="CSR base address.")
         cpu_group.add_argument("--clint-base",                   default="0xf0010000", help="CLINT base address.")
         cpu_group.add_argument("--plic-base",                    default="0xf0c00000", help="PLIC base address.")
-        cpu_group.add_argument("--jtag-tap",                     action="store_true", help="Add the jtag tap instead of jtag instruction interface")
+        cpu_group.add_argument("--jtag-tap",                     action="store_true",  help="Add the jtag tap instead of jtag instruction interface")
         cpu_group.add_argument("--with-formal",                  action="store_true",  help="Enable formal interface")
+        cpu_group.add_argument("--shared-region-base",           default=None,         help="Shared memory region base address")
+        cpu_group.add_argument("--shared-region-size",           default=None,         help="Shared memory region size")
 
     @staticmethod
     def args_read(args):
@@ -143,6 +145,8 @@ class VexRiscvBridge(CPU):
         if(args.clint_base): VexRiscvBridge.clint_base = int(args.clint_base, 16)
         if(args.plic_base):  VexRiscvBridge.plic_base  = int(args.plic_base, 16)
         if(args.jtag_tap):   VexRiscvBridge.jtag_tap   = int(args.jtag_tap)
+        if(args.shared_region_base):   VexRiscvBridge.shared_region_base = int(args.shared_region_base)
+        if(args.shared_region_size):   VexRiscvBridge.shared_region_size = int(args.shared_region_size)
 
     # ABI.
     @staticmethod
@@ -221,8 +225,8 @@ class VexRiscvBridge(CPU):
         f"Pr{VexRiscvBridge.pmp_regions}"                   \
         f"Pg{VexRiscvBridge.pmp_granularity}"               \
         "_" \
-        f"Sr{hex(VexRiscvBridge.shared_region_start)}"                                    \
-        f"_{hex(VexRiscvBridge.shared_region_start + VexRiscvBridge.shared_region_size)}" \
+        f"Sr{hex(VexRiscvBridge.shared_region_base)}"                                    \
+        f"_{hex(VexRiscvBridge.shared_region_base + VexRiscvBridge.shared_region_size)}" \
         f"{'_Fml'  if VexRiscvBridge.with_formal else ''}"  \
         f"{'_Supr' if VexRiscvBridge.with_supervisor else ''}"
 
@@ -305,7 +309,7 @@ class VexRiscvBridge(CPU):
         gen_args.append(f"--pmp-regions={VexRiscvBridge.pmp_regions}")
         gen_args.append(f"--pmp-granularity={VexRiscvBridge.pmp_granularity}")
         gen_args.append(f"--supervisor={VexRiscvBridge.with_supervisor}")
-        gen_args.append(f"--shared-region-start={VexRiscvBridge.shared_region_start}")
+        gen_args.append(f"--shared-region-start={VexRiscvBridge.shared_region_base}")
         gen_args.append(f"--shared-region-size={VexRiscvBridge.shared_region_size}")
 
         cmd = 'cd {path} && sbt "runMain vexriscv.demo.bridge.VexRiscvBridgeLitexSmpClusterCmdGen {args}"'.format(path=os.path.join(vdir, "ext", "VexRiscv"), args=" ".join(gen_args))
