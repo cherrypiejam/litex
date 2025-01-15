@@ -62,6 +62,13 @@ class VexRiscvBridge(CPU):
     clint_base           = 0xf001_0000
     plic_base            = 0xf0c0_0000
     reset_vector         = 0
+    with_mmu             = False
+    with_formal          = False
+    pmp_regions          = 16
+    pmp_granularity      = 256
+    with_supervisor      = False
+    shared_region_start  = 0x4000_0000
+    shared_region_size   = 0x1000_0000
 
     # Command line configuration arguments.
     @staticmethod
@@ -91,6 +98,8 @@ class VexRiscvBridge(CPU):
         cpu_group.add_argument("--csr-base",                     default="0xf0000000", help="CSR base address.")
         cpu_group.add_argument("--clint-base",                   default="0xf0010000", help="CLINT base address.")
         cpu_group.add_argument("--plic-base",                    default="0xf0c00000", help="PLIC base address.")
+        cpu_group.add_argument("--jtag-tap",                     action="store_true", help="Add the jtag tap instead of jtag instruction interface")
+        cpu_group.add_argument("--with-formal",                  action="store_true",  help="Enable formal interface")
 
     @staticmethod
     def args_read(args):
@@ -122,6 +131,8 @@ class VexRiscvBridge(CPU):
             VexRiscvBridge.with_fpu     = True
             VexRiscvBridge.icache_width = 64
             VexRiscvBridge.dcache_width = 64 # Required for F64
+        if(args.with_formal):
+            VexRiscvBridge.with_formal = True
         if(args.cpu_per_fpu):
             VexRiscvBridge.cpu_per_fpu = args.cpu_per_fpu
         if(args.with_rvc):
@@ -131,7 +142,7 @@ class VexRiscvBridge(CPU):
         if(args.csr_base):   VexRiscvBridge.csr_base   = int(args.csr_base, 16)
         if(args.clint_base): VexRiscvBridge.clint_base = int(args.clint_base, 16)
         if(args.plic_base):  VexRiscvBridge.plic_base  = int(args.plic_base, 16)
-        if(args.jtag_tap):  VexRiscvBridge.jtag_tap = int(args.jtag_tap)
+        if(args.jtag_tap):   VexRiscvBridge.jtag_tap   = int(args.jtag_tap)
 
     # ABI.
     @staticmethod
@@ -197,15 +208,23 @@ class VexRiscvBridge(CPU):
         f"{'_'+ldw if not VexRiscvBridge.wishbone_memory  else ''}" \
         f"{'_Cdma' if VexRiscvBridge.coherent_dma         else ''}" \
         f"{'_Aes'  if VexRiscvBridge.aes_instruction      else ''}" \
-        f"{'_Time'  if VexRiscvBridge.expose_time      else ''}" \
+        f"{'_Time' if VexRiscvBridge.expose_time          else ''}" \
         f"{'_Ood'  if VexRiscvBridge.out_of_order_decoder else ''}" \
         f"{'_Wm'   if VexRiscvBridge.wishbone_memory      else ''}" \
         f"{'_Wf32' if VexRiscvBridge.wishbone_force_32b   else ''}" \
-        f"{'_Fpu' + str(VexRiscvBridge.cpu_per_fpu)  if VexRiscvBridge.with_fpu else ''}" \
+        f"{'_Fpu' + str(VexRiscvBridge.cpu_per_fpu) if VexRiscvBridge.with_fpu else ''}" \
         f"{'_Pd'   if VexRiscvBridge.privileged_debug else ''}" \
         f"{'_Hb' + str(VexRiscvBridge.hardware_breakpoints) if VexRiscvBridge.hardware_breakpoints > 0 else ''}" \
-        f"{'_Rvc'  if VexRiscvBridge.with_rvc else ''}"
-        f"{'_JtagT'  if VexRiscvBridge.jtag_tap else ''}"
+        f"{'_Rvc'   if VexRiscvBridge.with_rvc    else ''}" \
+        f"{'_JtagT' if VexRiscvBridge.jtag_tap    else ''}" \
+        "_" \
+        f"Pr{VexRiscvBridge.pmp_regions}"                   \
+        f"Pg{VexRiscvBridge.pmp_granularity}"               \
+        "_" \
+        f"Sr{hex(VexRiscvBridge.shared_region_start)}"                                    \
+        f"_{hex(VexRiscvBridge.shared_region_start + VexRiscvBridge.shared_region_size)}" \
+        f"{'_Fml'  if VexRiscvBridge.with_formal else ''}"  \
+        f"{'_Supr' if VexRiscvBridge.with_supervisor else ''}"
 
     # Default Configs Generation.
     @staticmethod
@@ -218,10 +237,10 @@ class VexRiscvBridge(CPU):
         # Let's not worry about cache for now
         VexRiscvBridge.icache_width = 32
         VexRiscvBridge.dcache_width = 32
-        VexRiscvBridge.dcache_size  = 0
-        VexRiscvBridge.icache_size  = 0
-        # VexRiscvBridge.dcache_size  = 4096
-        # VexRiscvBridge.icache_size  = 4096
+        # VexRiscvBridge.dcache_size  = 0
+        # VexRiscvBridge.icache_size  = 0
+        VexRiscvBridge.dcache_size  = 4096
+        VexRiscvBridge.icache_size  = 4096
         VexRiscvBridge.dcache_ways  = 1
         VexRiscvBridge.icache_ways  = 1
 
@@ -232,16 +251,22 @@ class VexRiscvBridge(CPU):
         VexRiscvBridge.coherent_dma         = False
         VexRiscvBridge.hardware_breakpoints = 0
 
-        # Without formal
-        VexRiscvBridge.with_formal  = False
+        # With formal
+        VexRiscvBridge.with_formal          = True
+
+        # PMP
+        VexRiscvBridge.pmp_regions          = 16
+        VexRiscvBridge.pmp_granularity      = 256
+
+        # Without supervisor
+        VexRiscvBridge.with_supervisor      = False
 
         VexRiscvBridge.generate_cluster_name()
         VexRiscvBridge.generate_netlist()
 
         # Multi cores.
         for core_count in [2]:
-            VexRiscvBridge.coherent_dma   = True
-            VexRiscvBridge.cpu_count      = core_count
+            VexRiscvBridge.cpu_count = core_count
             VexRiscvBridge.generate_cluster_name()
             VexRiscvBridge.generate_netlist()
 
@@ -276,9 +301,30 @@ class VexRiscvBridge(CPU):
         gen_args.append(f"--dtlb-size={VexRiscvBridge.dtlb_size}")
         gen_args.append(f"--itlb-size={VexRiscvBridge.itlb_size}")
         gen_args.append(f"--mmu={VexRiscvBridge.with_mmu}")
+        gen_args.append(f"--formal={VexRiscvBridge.with_formal}")
+        gen_args.append(f"--pmp-regions={VexRiscvBridge.pmp_regions}")
+        gen_args.append(f"--pmp-granularity={VexRiscvBridge.pmp_granularity}")
+        gen_args.append(f"--supervisor={VexRiscvBridge.with_supervisor}")
+        gen_args.append(f"--shared-region-start={VexRiscvBridge.shared_region_start}")
+        gen_args.append(f"--shared-region-size={VexRiscvBridge.shared_region_size}")
 
         cmd = 'cd {path} && sbt "runMain vexriscv.demo.bridge.VexRiscvBridgeLitexSmpClusterCmdGen {args}"'.format(path=os.path.join(vdir, "ext", "VexRiscv"), args=" ".join(gen_args))
         subprocess.check_call(cmd, shell=True)
+
+        cluster_filename = os.path.join(vdir,  VexRiscvBridge.cluster_name + ".v")
+        def add_synthesis_define(filename):
+            """Add SYNTHESIS define to verilog for toolchains requiring it, ex Gowin"""
+            synthesis_define = "`define SYNTHESIS\n"
+            # Read file.
+            with open(filename, "r") as f:
+                lines = f.readlines()
+            # Modify file.
+            with open(filename, "w") as f:
+                if lines[0] != synthesis_define:
+                    f.write(synthesis_define)
+                for line in lines:
+                    f.write(line)
+        add_synthesis_define(cluster_filename)
 
 
     def __init__(self, platform, variant):
@@ -303,13 +349,26 @@ class VexRiscvBridge(CPU):
             self.jtag_update  = Signal()
 
         self.interrupt        = Signal(32)
-        self.pbus             = pbus = wishbone.Interface(data_width={
+        self.pbus_shared      = pbus_shared = wishbone.Interface(data_width={
             # Always 32-bit when using direct LiteDRAM interfaces.
             False : 32,
             # Else max of I/DCache-width.
             True  : max(VexRiscvBridge.icache_width, VexRiscvBridge.dcache_width),
         }[VexRiscvBridge.wishbone_memory and not VexRiscvBridge.wishbone_force_32b], addressing="word")
-        self.periph_buses     = [pbus] # Peripheral buses (Connected to main SoC's bus).
+        self.pbus_locals      = pbus_locals = [
+            wishbone.Interface(
+                data_width={
+                    # Always 32-bit when using direct LiteDRAM interfaces.
+                    False : 32,
+                    # Else max of I/DCache-width.
+                    True  : max(VexRiscvBridge.icache_width, VexRiscvBridge.dcache_width),
+                }[VexRiscvBridge.wishbone_memory and not VexRiscvBridge.wishbone_force_32b],
+                addressing="word"
+            )
+            for _ in range(VexRiscvBridge.cpu_count)
+        ]
+        self.periph_buses     = [pbus_shared] + pbus_locals # Peripheral buses (Connected to main SoC's bus).
+        # self.periph_buses = [pbus_shared]
         self.memory_buses     = []     # Memory buses (Connected directly to LiteDRAM).
 
         # # #
@@ -322,18 +381,35 @@ class VexRiscvBridge(CPU):
             # Interrupts.
             i_interrupts = self.interrupt,
 
-            # Peripheral Bus (Master).
-            o_peripheral_CYC      = pbus.cyc,
-            o_peripheral_STB      = pbus.stb,
-            i_peripheral_ACK      = pbus.ack,
-            o_peripheral_WE       = pbus.we,
-            o_peripheral_ADR      = pbus.adr,
-            i_peripheral_DAT_MISO = pbus.dat_r,
-            o_peripheral_DAT_MOSI = pbus.dat_w,
-            o_peripheral_SEL      = pbus.sel,
-            i_peripheral_ERR      = pbus.err,
-            o_peripheral_CTI      = pbus.cti,
-            o_peripheral_BTE      = pbus.bte
+            # Shared Peripheral Bus (Master).
+            o_peripheral_CYC      = pbus_shared.cyc,
+            o_peripheral_STB      = pbus_shared.stb,
+            i_peripheral_ACK      = pbus_shared.ack,
+            o_peripheral_WE       = pbus_shared.we,
+            o_peripheral_ADR      = pbus_shared.adr,
+            i_peripheral_DAT_MISO = pbus_shared.dat_r,
+            o_peripheral_DAT_MOSI = pbus_shared.dat_w,
+            o_peripheral_SEL      = pbus_shared.sel,
+            i_peripheral_ERR      = pbus_shared.err,
+            o_peripheral_CTI      = pbus_shared.cti,
+            o_peripheral_BTE      = pbus_shared.bte
+        ) | dict (
+            # Local Peripheral Buses (Master).
+            (k.format(cpu_index), v(pbus_locals[cpu_index]))
+            for (k, v) in [
+                ("o_peripheralLocals_{}_CYC"     ,   lambda p: p.cyc),
+                ("o_peripheralLocals_{}_STB"     ,   lambda p: p.stb),
+                ("i_peripheralLocals_{}_ACK"     ,   lambda p: p.ack),
+                ("o_peripheralLocals_{}_WE"      ,   lambda p: p.we),
+                ("o_peripheralLocals_{}_ADR"     ,   lambda p: p.adr),
+                ("i_peripheralLocals_{}_DAT_MISO",   lambda p: p.dat_r),
+                ("o_peripheralLocals_{}_DAT_MOSI",   lambda p: p.dat_w),
+                ("o_peripheralLocals_{}_SEL"     ,   lambda p: p.sel),
+                ("i_peripheralLocals_{}_ERR"     ,   lambda p: p.err),
+                ("o_peripheralLocals_{}_CTI"     ,   lambda p: p.cti),
+                ("o_peripheralLocals_{}_BTE"     ,   lambda p: p.bte),
+            ]
+            for cpu_index in range(VexRiscvBridge.cpu_count)
         )
 
         if VexRiscvBridge.jtag_tap:
@@ -419,19 +495,20 @@ class VexRiscvBridge(CPU):
 
         # Add Cluster.
         cluster_filename = os.path.join(vdir,  self.cluster_name + ".v")
-        def add_synthesis_define(filename):
-            """Add SYNTHESIS define to verilog for toolchains requiring it, ex Gowin"""
-            synthesis_define = "`define SYNTHESIS\n"
-            # Read file.
-            with open(filename, "r") as f:
-                lines = f.readlines()
-            # Modify file.
-            with open(filename, "w") as f:
-                if lines[0] != synthesis_define:
-                    f.write(synthesis_define)
-                for line in lines:
-                    f.write(line)
-        add_synthesis_define(cluster_filename)
+        if not os.path.exists(cluster_filename):
+            def add_synthesis_define(filename):
+                """Add SYNTHESIS define to verilog for toolchains requiring it, ex Gowin"""
+                synthesis_define = "`define SYNTHESIS\n"
+                # Read file.
+                with open(filename, "r") as f:
+                    lines = f.readlines()
+                    # Modify file.
+                with open(filename, "w") as f:
+                    if lines[0] != synthesis_define:
+                        f.write(synthesis_define)
+                    for line in lines:
+                        f.write(line)
+            add_synthesis_define(cluster_filename)
         platform.add_source(cluster_filename, "verilog")
 
     def add_jtag(self, pads):
